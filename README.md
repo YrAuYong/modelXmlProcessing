@@ -1,7 +1,7 @@
 # modelXmlProcessing
 Scripts for extracting data from model.xml, apply cleaning and transformation on extracted data for various purposes:
-- validation
-- lookup table generation
+- validation 
+- lookup table generation [https://github.com/YrAuYong/modelXmlProcessing/blob/master/README.md#generate-lookup-table]
 
 ## model validation
 ### Prerequisite:
@@ -207,9 +207,10 @@ extract_kpi_names execution done! Generated files:
 -	Kpi_ref.en_in – “`<prefix>.<querySubject>.<queryItem>`” for locale=”en-in”
 
 Where, `<prefix>` : 
-a.	For Huawei: [Huawei CS (rel)].
-b.	For Ericsson: [Ericsson Access (rel)].
-c.	For ALU: [ALU Access (rel)].
+
+1.	For Huawei: [Huawei CS (rel)].
+2.	For Ericsson: [Ericsson Access (rel)].
+3.	For ALU: [ALU Access (rel)].
 
 ### Clean up and filters:
 -	Rows with the following kpi_ref* patterns are removed:
