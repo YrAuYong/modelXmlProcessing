@@ -1,6 +1,6 @@
 # modelXmlProcessing
 Scripts for extracting data from model.xml, apply cleaning and transformation on extracted data for various purposes:
-- validation 
+- [model validation] (https://github.com/YrAuYong/modelXmlProcessing/blob/master/README.md#model-validation) 
 - [lookup table generation] (https://github.com/YrAuYong/modelXmlProcessing/blob/master/README.md#generate-lookup-table)
 
 ## model validation
