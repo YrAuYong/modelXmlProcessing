@@ -185,40 +185,60 @@ Function: process_udcxml:
 ### Usage:
 
 ```
-> source("kpi_names_extraction.R")
-Usage of extract_kpi_names function:
+> source("kpi_lookup.R")
+Usage of extract_kpi_lookup function:
 
-        - extract_kpi_names("./path/to/model.xml")
-        - extract_kpi_names("D:/full/path/to/model.xml")
-> extract_kpi_names("./modelxml_20151109/model.xml")
-modelfile: ./modelxml_20151109/model.xml
-extract_kpi_names execution done! Generated files:
-        - D:/R workdir/etisalat/modelxml_20151109/kpi_names.csv
+	- extract_kpi_lookup("./path/to/model.xml", "./path/to/alarm.xlsx")
+	- extract_kpi_lookup("D:/full/path/to/model.xml", "D:/full/path/to/alarm.xlsx")
+
+> extract_kpi_lookup("modelxml_20151117/model.xml", "Alarm_Threshold_v0.2_20151102_lau.xlsx")
+modelfile: modelxml_20151117/model.xml
+alarmFile: Alarm_Threshold_v0.2_20151102_lau.xlsx
+extract_kpi_lookup execution done! Generated files:
+	- D:/R workdir/etisalat/modelxml_20151117/lookup_output/20151120-150443/kpi_lookup.csv
+
+## run duration
+> system.time(extract_kpi_lookup("modelxml_20151117/model.xml", "Alarm_Threshold_v0.2_20151102_lau.xlsx"))
+modelfile: modelxml_20151117/model.xml
+alarmFile: Alarm_Threshold_v0.2_20151102_lau.xlsx
+extract_kpi_lookup execution done! Generated files:
+	- D:/R workdir/etisalat/modelxml_20151117/lookup_output/20151120-150443/kpi_lookup.csv
+
+   user  system elapsed 
+  90.57    0.19   91.71 
 ```
 
 ### Model.xml node paths extracted:
--	Under Business Layer hierarchy project.namespace.namespace(name=”Business Layer”):
-  * namespace(name=”Huawei/ Ericsson/ALU KPIs”).folder(name=”Hourly KPIs”).querySubject.queryItem
-  * namespace(name=”Huawei/ Ericsson/ALU KPIs”).folder(name=”Hourly KPIs”).querySubject.queryItemFolder.queryItem
+-	Under Business Layer hierarchy `project/namespace/namespace[name=Business Layer]`:
+  * `namespace[name=<vendors>]/folder[name=Hourly KPIs]/querySubject/queryItem`
+  * `querySubject[name=Time]/queryItem[name=Hour key Start]`
+  * `querySubject[name=<node_type> <vendors>]/queryItem[name=Cell ID]` ##to remove hack done due to accomodate typo "Huwawei"
+- 	Under Presentation Layer hierarchy `project/namespace/namespace[name=Presentation Layer]`:
+  * `folder[name='Hourly KPIs']/shortcut`
+  * `shortcut[name=Time]`
+  * `shortcut[name=<node_type>]`
 
-### Output kpi_names.csv Columns:
--	Kpi_name – queryItem name for locale=”en”
--	Kpi_ref – “`<prefix>.<querySubject>.<queryItem>`” for locale=”en”
--	Kpi_ref.en_in – “`<prefix>.<querySubject>.<queryItem>`” for locale=”en-in”
+Where, 
+- `<vendors>` = Huawei | Ericsson | ALU
+- `<node_type>` = 2G | 3G | 4G
+- Items in the square brackets filter by children values with partial match, e.g.: "`shortcut[name=Time]`" = "shortcut" level filter by child, "name" value that contains string "Time"
 
-Where, `<prefix>` : 
+### Output `kpi_lookup.csv` Columns:
+- KPI NAME: Hourly kpis bu layer queryItem name
+- KPI REFERENCE: Hourly kpis `[<vendors>].[<pres layer querySubject name>].[<bu layer queryItem name>]`
+- HOUR KEY: `[<vendors>].[<pres layer querySubject, name=TIME>].[<time bu layer queryItem name>]`
+- ENTITY REFERENCE: `[<vendors>].[<pres layer querySubject name by node_type>].[<node_type bu layer queryItem name>]`
+- ALARM NAME: alarm name from input file alarm.xlsx
 
-1.	For Huawei: [Huawei CS (rel)].
-2.	For Ericsson: [Ericsson Access (rel)].
-3.	For ALU: [ALU Access (rel)].
+where,
+- bu = bussiness
+- pres = presentation
+- `<vendors>` = Huawei | Ericsson | ALU
+- `<node_type>` = 2G | 3G | 4G
 
 ### Clean up and filters:
--	Rows with the following kpi_ref* patterns are removed:
-  * "TSTAMP”
-  * “TimeSTAMP",
-  *	".*_ID",
-  *	"DA_.*"
-  *	"[Cell]"
+-	Rows with kpi_ref* values containing "POHC" are removed
+-	removed all rows with NA
 -	Removed header and trailing spaces
 
 ### Environment:
@@ -234,11 +254,14 @@ Where, `<prefix>` :
 #
 # packages required other than base rtools:
 # install.packages("XML")
+# install.packages("xlsx")
 # install.packages("dplyr")
 #
 # package versions during script dev:
 # > packageVersion("XML")
 # [1] ‘3.98.1.2’
+# > packageVersion("xlsx")
+# [1] ‘0.5.7’
 # > packageVersion("dplyr")
 # [1] ‘0.4.2’
 ```
