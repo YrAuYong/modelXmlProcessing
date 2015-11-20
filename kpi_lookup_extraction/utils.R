@@ -46,3 +46,7 @@ rm_htspc <- function(df) {
   df
 }
 
+chk_empty <- function(obj) { 
+  if(length(obj) > 1) stop("chk_empty function only accepts obj arg with length <= 1")
+  if(is.null(obj) || obj == "") NA else obj
+}
