@@ -16,60 +16,224 @@
 # > packageVersion("dplyr")
 # [1] ‘0.4.2’
 
-extract_kpi_names <- function(modelfile) {
+extract_kpi_lookup <- function(modelfile, presentationLayerFile = NULL) {
   ##############################################
-  # INIT
-  ##############################################  
-  # dependencies
-  require(dplyr)
+  # Source dependencies
+  ##############################################
+  #require(dplyr)
   source("utils.R", local=T)
   source("model_kpi.R", local = T)
   ##############################################
   # Input Arg checks
   ##############################################
   check_files(modelfile, "xml")
+  if(!is.null(presentationLayerFile)) check_files(presentationLayerFile, "csv")
   message(paste0("modelfile: ", modelfile))
+  message(paste0("presentationLayerFile: ", presentationLayerFile))
+  ##############################################
+  # INIT
+  ##############################################    
+  # Temporarily set current dir to be dir of modelfile, on exit the current dir will
+  # be reverted to the original current dir before function is called
+  owd <- getwd()
+  on.exit(setwd(owd), add = TRUE)
+  setwd(dirname(modelfile))
+  # Create dirs for output files
+  output_dir <- "lookup_output"
+  cuDT <- format(Sys.time(), "%Y%m%d-%H:%M:%S")
+  if(!dir.exists(file.path(output_dir))) dir.create(file.path(output_dir))
+  dir.create(file.path(output_dir, cuDT))
+  setwd(file.path(output_dir, cuDT))
   ############################################## 
   
-  make_kpiName_df <- function() {
-    # load and read xml
-    require(XML)
-    rootnode <-xmlRoot(xmlTreeParse(modelfile))
+  make_kpiLookup_df <- function() {
     
-    get_kpi_by_locale <- function(node, locale) {
-      if (node[[1]]$.attrs[["locale"]] == locale)
-        node[[1]]$text
-      else if(node[[2]]$.attrs[["locale"]] == locale)
-        node[[2]]$text
-      else
-        stop(paste0("Failed to extract name where locale is \"", locale, "\""))
+    ##############################################
+    # Prepare variables
+    ##############################################
+    require(XML)
+    # groups vars
+    vendors <- c("Huawei","Ericsson", "ALU")
+    techs <- c("2G", "3G", "4G")
+    pres_grps <- list(kpi_ref = "kpi_ref", hr_key = "hr_key", entity = "entity")
+    # load and read input files
+    rootnode <-xmlRoot(xmlTreeParse(modelfile))
+    if(!is.null(presentationLayerFile)) pres_df <- read.csv(presentationLayerFile, stringsAsFactors=FALSE)
+    
+    ##############################################
+    # Nested functions
+    ##############################################
+    get_grp <- function(grp, target) {
+      grp[sapply(grp,
+                 function(g) {
+                   grepl(g, target, ignore.case = T)
+                 })]
     }
     
-    bind_rws_2_kpiNames_df <- function(df, node, lastNode, topNamespace) {
-      if(is.null(lastNode) | is.null(topNamespace)){ stop("lastNode or topNamespace is null.")}  
+    sqr_bracketify <- function(s, prefixDot = FALSE) {
+      paste0(ifelse(prefixDot, ".", ""), "[", s, "]")
+    }
+    
+    add_kpi_counter <- function(df, node, lastNode, topNamespace) {
+      if(is.null(lastNode) || is.null(topNamespace)){ stop("lastNode or topNamespace is null.")}
+      #kpi_name = paste0("[", vendors[sapply(vendors, function(v){ grepl(v, topNamespace, ignore.case = T) })],
+      #"].[", chk_empty(node$name$text), "]")
+      rbind(df,data.frame(vendor = chk_empty(get_grp(vendors, topNamespace)),
+                          kpi_ref_name = chk_empty(node$name$text),
+                          kpi_ref_link = chk_empty(paste0("[", topNamespace, "].[", lastNode$name$text, "]")),  #"].[", node$name$text, "]")),
+                          counter_name = chk_empty(paste0(
+                            sub(".*\\.(\\[.*\\])$", "\\1", node$expression[which(names(node$expression) == "refobj")]),
+                            collapse=',')),
+                          counter_ref_link = chk_empty(paste0(
+                            gsub("^(.*)\\.\\[.*\\]$", "\\1", node$expression[which(names(node$expression) == "refobj")]),
+                            collapse=',')),
+                          #hr_key_link = ,
+                          #entity_name =,
+                          tech = chk_empty(get_grp(techs, lastNode$name$text)),
+                          stringsAsFactors=F))
+    }
+    
+    make_bu_df <- function() {
+      bu_df <- data.frame(vendor = character(),
+                          kpi_ref_name = character(),
+                          kpi_ref_link = character(),
+                          counter_name = character(),
+                          counter_ref_link = character(),
+                          tech = character(),
+                          stringsAsFactors=F)
       
-      if(FALSE) {
-        #will not add rows for:
-        # - node$expression that contains "Data Layer"
-        # - lastNode$name$text in summary_name_2_rm list
-        kpi_ref_2_rm <- c("Cell 2G",
-                          "Cell 3G",
-                          "Cell 4G",
-                          "Time",
-                          "Etisalat Configuration Table",
-                          "POHC",
-                          #paste0("ALL ", vendor, " Region"),
-                          "Cell 3G Femto")
-        if((sum(grepl("Data Layer", node$expression)) > 0) |
-             (lastNode$name$text %in% kpi_ref_2_rm)) return(df)
+      # only extract from bussiness layer
+      # Add Hourly KPIs and counters to bu_df
+      bu_node_chunk <- getNodeChunks(rootnode,"namespace/namespace[name=Business Layer]")
+      
+      for (np in c(paste0("namespace[name=", vendors, "]/folder[name=Hourly KPIs]/querySubject/queryItem"))) {
+        bu_df <- addRows_byfilter(bu_df, lapply(bu_node_chunk[], xmlToList), np, add_kpi_counter)
       }
       
-      rbind(df,data.frame(kpi_name = chk_empty(get_kpi_by_locale(node, "en")),
-                          kpi_name.en_in = chk_empty(get_kpi_by_locale(node, "en-in")),
-                          kpi_ref = chk_empty(get_kpi_by_locale(lastNode, "en")),
-                          kpi_ref.en_in = chk_empty(get_kpi_by_locale(lastNode, "en-in")),
-                          vendor = chk_empty(sub(" KPIs", "", topNamespace)),
-                          stringsAsFactors=F))
+      # Add hour_key to bu_df    
+      bu_df$hr_key_link <- paste0(sqr_bracketify(bu_df$vendor),
+                                  sqr_bracketify(xmlValue(
+                                    getNodeChunks(
+                                      bu_node_chunk,
+                                      "querySubject[name=Time]/name")), T))
+      bu_df$hr_key_name <- xmlValue(
+        getNodeChunks(
+          bu_node_chunk,
+          "querySubject[name=Time]/queryItem[name=Hour key Start]/name"))
+      #bu_df$hr_key_link <- mapply(gsub,
+      #                       "Data Layer",
+      #                       bu_df$vendor,
+      #                       xmlValue(
+      #                         getNodeChunks(
+      #                           bu_node_chunk,
+      #                           "querySubject[name=Time]/queryItem[name=Hour key Start]/expression/refobj")),
+      #                       USE.NAMES = F)
+      
+      # Add entity_name to bu_df
+      bu_df$entity_name <- NA
+      pairs <- expand.grid(techs, vendors, stringsAsFactors = F)
+      for (rw in 1:nrow(pairs)) {
+        type <- pairs[rw, 1]
+        v <- pairs[rw, 2]
+        entity_path <- paste0("querySubject[name=", type, " ", sub("Huawei", "Huwawei", v), "]") #temp workaround to accommodate typo Huwawei
+        bu_df$entity_link[bu_df$tech == type & bu_df$vendor == v] <- 
+          paste0(sqr_bracketify(v), sqr_bracketify(xmlValue(getNodeChunks(bu_node_chunk, paste0(entity_path, "/name"))), T))
+        bu_df$entity_name[bu_df$tech == type & bu_df$vendor == v] <-
+          xmlValue(getNodeChunks(bu_node_chunk, paste0(entity_path, "/queryItem[name=Cell ID]/name")))
+        
+        #bu_df$entity_name[bu_df$tech == type & bu_df$vendor == v] <- mapply(gsub,
+        #                                                                    "Data Layer",
+        #                                                                    v,
+        #                                                                    xmlValue(getNodeChunks(bu_node_chunk, entity_path)),
+        #                                                                    USE.NAMES = F)
+      }
+      
+      write.csv(bu_df, "bu_df.csv", row.names=F)
+      bu_df
+    }
+    
+    make_pres_df <- function() {
+      pres_node_chunk <- getNodeChunks(rootnode, "namespace/namespace[name=Presentation Layer]")
+      
+      pres_df <- data.frame(vendor = character(),
+                            FQN = character(),
+                            Ref.Obj = character(),
+                            grp = character(),
+                            stringsAsFactors = F)
+      
+      #To delete
+      get_xmlValue <- function(p) {
+        xmlValue(getNodeChunks(pres_node_chunk, p))
+      }
+           
+      for(v in vendors) {
+        v_node_chunk <- getNodeChunks(pres_node_chunk, paste0("namespace[name=", v, "]"))
+        v_name <- sqr_bracketify(xmlValue(getNodeChunks(v_node_chunk, "name")))
+        
+        #add kpi_ref_grp
+        kpi_ref_grp <- cbind(
+          FQN = paste0(v_name,
+                       sqr_bracketify(sapply(
+                         getNodeSet(v_node_chunk, "//folder[name='Hourly KPIs']/shortcut/name"),
+                         xmlValue), T)),
+          Ref.Obj = sapply(getNodeSet(v_node_chunk, "//folder[name='Hourly KPIs']/shortcut/refobj"), xmlValue),
+          grp = pres_grps$kpi_ref
+        )
+        
+        #add hr_key_grp
+        hr_key_var <- paste0(v_name,
+                             sqr_bracketify(xmlValue(getNodeChunks(v_node_chunk, "shortcut[name=Time]/name")), T))        
+        hr_key_grp <- cbind(
+          FQN = hr_key_var,
+          Ref.Obj = hr_key_var,
+          grp = pres_grps$hr_key)
+        
+        #add entity_grp
+        entity_grp <- NULL
+        for (tch in techs) {
+          entity_grp <- rbind(entity_grp, cbind(
+            FQN = paste0(v_name,
+                         sqr_bracketify(sapply(
+                           getNodeSet(v_node_chunk, paste0("/namespace/shortcut[contains(concat(' ', name, ' '), '", tch, "')]/name")), xmlValue), T)),
+            Ref.Obj = paste0(v_name,
+                             gsub(".*(\\.\\[.*\\])$", "\\1",
+                                 sapply(getNodeSet(v_node_chunk, paste0("/namespace/shortcut[contains(concat(' ', name, ' '), '", tch, "')]/refobj")), xmlValue))),
+            grp = pres_grps$entity))
+        }
+        
+        #rbind all grps and add to pres_df
+        pres_df <- rbind(
+          pres_df,
+          cbind(vendor = v, rbind(kpi_ref_grp, hr_key_grp, entity_grp))
+        )
+      }
+      
+      write.csv(pres_df, "pres_df.csv", row.names=F)
+      pres_df
+    }
+    
+    merge_pres_bu_df <- function(lookup_df, pres_df) {
+      if(FALSE) {
+        # lookup_df$kpi_ref = pres_df$FQN + lookup_df$kpi_ref_name by linking lookup_df$kpi_ref_link to pres_df$Ref.Obj
+        for (ref in pres_df$Ref.Obj)
+          lookup_df$kpi_ref[lookup_df$kpi_ref_link == ref] <-
+          paste0(pres_df$FQN[pres_df$Ref.Obj == ref],
+                 sqr_bracketify(lookup_df$kpi_ref_name[lookup_df$kpi_ref_link == ref], T))
+        
+        for (ref in unique(pres_df$hr_key_link))
+          lookup_df$hr_key[lookup_df$hr_key_link == ref] <-
+          paste0(ref, sqr_bracketify(lookup_df$hr_key_name[lookup_df$hr_key_link == ref], T))
+      }
+          
+      for (grp in pres_grps) {
+        for (ref in pres_df$Ref.Obj[pres_df$grp == grp]) {
+          lookup_df[lookup_df[, paste0(grp, "_link")] == ref, grp] <-
+            paste0(pres_df$FQN[pres_df$Ref.Obj == ref],
+                   sqr_bracketify(lookup_df[lookup_df[, paste0(grp, "_link")] == ref, paste0(grp, "_name")], T))
+        }
+      }
+
+      lookup_df
     }
     
     clean_data <- function(df) {      
@@ -101,50 +265,48 @@ extract_kpi_names <- function(modelfile) {
     }
     
     ###################################################
-    # make_kpiName_df steps:
+    # make_kpiLookup_df steps:
     # 1. load & read XML
-    # 2. Extract kpi Names under the bussiness layer
-    # 3. Rename kpi_names df columns
-    # 4. Clean kpi Names in df
+    # 2. Extract kpi lookups under the bussiness layer
+    # 3. if presentationLayerFile NULL make pres_df
+    # 4. combine bu_df and pres_df into lookup_df
     ###################################################
+       
+    bu_df <- make_bu_df()
     
-    df <- data.frame(kpi_name = character(),
-                     kpi_name.en_in = character(),
-                     kpi_ref = character(),
-                     kpi_ref.en_in = character(),
-                     vendor = character(),
-                     stringsAsFactors=F)
-    
-    
-    #only extract bussiness layer
-    for (np in qItem_nodepaths_byName) {
-      #print(paste0("np: ", paste0(np, collapse = ".")))
-      df <- addRows_byName(df, get_layer(6, "Business Layer", rootnode), np, bind_rws_2_kpiNames_df)
+    if(is.null(presentationLayerFile)) {
+      pres_df <- make_pres_df()
     }
     
-    names(df) <- c("kpi_name", "kpi_name.en_in", "kpi_ref", "kpi_ref.en_in", "vendor")
+    lookup_df <- merge_pres_bu_df(bu_df, pres_df)
+    write.csv(lookup_df, "kpi_lookup_all.csv", row.names=F)
     
-    clean_data(df)
+    if(FALSE) {
+      lookup_df <- clean_data(lookup_df)
+    }
+    
+    list(lookup = lookup_df, bu = bu_df, pres = pres_df)
   }
   
-  kpiName_df <- make_kpiName_df()
+  kpiLookup_df <- make_kpiLookup_df()
   
-  # Temporarily set current dir to be dir of modelfile, on exit the current dir will
-  # be reverted to the original current dir before function is called
-  owd <- getwd()
-  on.exit(setwd(owd), add = TRUE)
-  setwd(dirname(modelfile)) 
-  write.csv(kpiName_df, "kpi_names.csv", row.names=F)
   
-  message(paste0("extract_kpi_names execution done! Generated files:\n\t- ",
-                 getwd(), "/kpi_names.csv\n"))
+  
+  
+  if(FALSE) {
+    write.csv(kpiLookup_df, "kpi_lookup.csv", row.names=F)
+    
+    message(paste0("extract_kpi_lookup execution done! Generated files:\n\t- ",
+                   getwd(), "/kpi_lookup.csv\n"))
+     
+  }
   
   ##############################################
   
-  #kpiName_df
+  kpiLookup_df
 }
 
 message(
-  paste0("Usage of extract_kpi_names function:\n\n",
-         "\t- extract_kpi_names(\"./path/to/model.xml\")\n",
-         "\t- extract_kpi_names(\"D:/full/path/to/model.xml\")\n"))
+  paste0("Usage of extract_kpi_lookup function:\n\n",
+         "\t- extract_kpi_lookup(\"./path/to/model.xml\")\n",
+         "\t- extract_kpi_lookup(\"D:/full/path/to/model.xml\")\n"))

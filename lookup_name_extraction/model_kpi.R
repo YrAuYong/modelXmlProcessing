@@ -20,58 +20,125 @@ source("utils.R", local = T)
 require(dplyr)
 ##############################################
 
-#bu node paths
-qItem_nodepaths <- list(c("namespace", "folder", "querySubject"))
-qItem_nodepaths_byName <- list(list(c("namespace", "^(Huawei|Ericsson|ALU) KPIs$"),
-                                    c("folder", "^Hourly KPIs$"),
-                                    c("querySubject", NA),
-                                    c("queryItem", NA)),
-                               list(c("namespace", "^(Huawei|Ericsson|ALU) KPIs$"),
-                                    c("folder", "^Hourly KPIs$"),
-                                    c("querySubject", NA),
-                                    c("queryItemFolder", NA),
-                                    c("queryItem", NA)))
-#qItem_nodepaths_byName <- list(data.frame(path = c("namespace", "folder", "querySubject"),
-#                                          name = c("Huawei KPIs", "Hourly KPIs", NA)))
-
-
 if (FALSE) {
   # Old paths
   qItem_nodepaths <- list(c("querySubject", "queryItem"),
                           c("namespace", "folder", "querySubject", "queryItem"),
                           c("namespace", "folder", "querySubject", "queryItemFolder", "queryItem"))
+  
+  qItem_nodepaths_byName <- list(list(c("namespace", "^(Huawei|Ericsson|ALU) KPIs$"),
+                                      c("folder", "^Hourly KPIs$"),
+                                      c("querySubject", NA),
+                                      c("queryItem", NA)),
+                                 list(c("namespace", "^(Huawei|Ericsson|ALU) KPIs$"),
+                                      c("folder", "^Hourly KPIs$"),
+                                      c("querySubject", NA),
+                                      c("queryItemFolder", NA),
+                                      c("queryItem", NA)))
+  #old methods
+  addRows_byName <- function(df, node, path_byName, fun, lastNode=NULL, topNamespace=NULL) {
+    if(length(path_byName) > 0) {
+      node_idx <- which(names(node) == path_byName[[1]][1])
+      if(length(node_idx) != 0) {
+        for(i in node_idx) {
+          if(is.na(path_byName[[1]][2]) || grepl(path_byName[[1]][2], sub("\\s*\\(en-in\\)\\s*", "", node[[i]]$name$text))) {
+            #print(paste0("i: ", i))
+            df <- addRows_byName(df, node[[i]], path_byName[-1], fun,
+                                 if(toupper(sub("\\(en-in\\)\\s*", "", node$name$text))=="COUNTERS") lastNode else node,
+                                 if(is.null(topNamespace)) node[[i]]$name$text else topNamespace)
+          }  
+        }
+      } 
+      df
+    } else {
+      fun(df, node, lastNode, topNamespace)
+    }
+  }
 }
+
+#bu node paths
+qItem_nodepaths <- list(c("namespace", "folder", "querySubject", "queryItem"),
+                        c("namespace", "folder", "querySubject", "queryItemFolder", "queryItem"))
 
 #dim node paths
 measure_nodepaths <- list(c("dimension", "measure"),
                           c("dimension", "measureFolder","measure"))
 
+
 get_layer <- function(idx, layerName, rootnode) {
   #root[["namespace"]][[6]][["name"]][[1]]$value
   nspc <- rootnode[["namespace"]][[idx]]
-  if(is.null(nspc[["name"]][[1]]$value) | !grepl(layerName, nspc[["name"]][[1]]$value))
+  if(is.null(nspc[["name"]][[1]]$value) || !grepl(layerName, nspc[["name"]][[1]]$value))
     stop(paste0("get_layer: namespace idx does not match layername."))
   lapply(nspc[], xmlToList)
 }
 
-addRows_byName <- function(df, node, path_byName, fun, lastNode=NULL, topNamespace=NULL) {
-  if(length(path_byName) > 0) {
-    node_idx <- which(names(node) == path_byName[[1]][1])
-    if(length(node_idx) != 0) {
-      for(i in node_idx) {
-        if(is.na(path_byName[[1]][2]) | grepl(path_byName[[1]][2], sub("\\s*\\(en-in\\)\\s*", "", node[[i]]$name$text))) {
-          #print(paste0("i: ", i))
-          df <- addRows_byName(df, node[[i]], path_byName[-1], fun,
-                               if(toupper(sub("\\(en-in\\)\\s*", "", node$name$text))=="COUNTERS") lastNode else node,
-                               if(is.null(topNamespace)) node[[i]]$name$text else topNamespace)
-        }  
+parsePath <- function(path) {
+  path <- unlist(strsplit(path, "/"))
+  list(path = path,
+       pathHead = sub("(.*)\\[.*\\]","\\1", path[1]),
+       byfilter = strsplit(sub(".+\\[(.*)\\]", "\\1", path[1]), "=")[[1]])
+}
+
+## assumes path looks like these:
+## - "tag1/tag2[tag2childtag=123]/tag3[tag3childtag=abc doremi]/tag4"
+## - "tag1/tag2[tag2childtag=abc]/tag3[tag3childtag=^doremi$]/tag4"
+## tags are matched with whole word and children tag values matched supports patterns partially (only follow down the path of 1st pattern match)
+## search pattern only for children values, doesnt check for tag attributes/properties 
+getNodeChunks <- function(node, path) {
+  if(length(path) == 0) {
+    node
+  } else {
+    pathProp <- parsePath(path)
+    path <- pathProp$path
+    pathHead <- pathProp$pathHead
+    byfilter <- pathProp$byfilter
+    #print(paste0("pathHead: ", pathHead, ", byfilter: ", paste0(byfilter, collapse = ",")))
+    if (length(byfilter) == 2) {
+      #for (i in 1:length(node)) {
+      for (i in as.numeric(which(names(node) == pathHead))) {
+        #print(paste0("node[[", i, "]]$name = ", node[[i]]$name))
+        #print(paste0("xmlValue(node[[i]]$children[[byfilter[1]]]) = ", xmlValue(node[[i]]$children[[byfilter[1]]])))
+        #if (node[[i]]$name == pathHead &&
+              #xmlValue(node[[i]]$children[[byfilter[1]]]) == byfilter[2]) {
+        if (grepl(byfilter[2], xmlValue(node[[i]]$children[[byfilter[1]]]), ignore.case = T)) {
+          return(getNodeChunks(node[[i]], path[-1]))
+        }
       }
-    } 
+    } else {
+      #print(paste0("is.null(node[[pathHead]]) = ", is.null(node[[pathHead]])))
+      if(!is.null(node[[pathHead]])) {
+        #print("1 was here")
+        return(getNodeChunks(node[[pathHead]], path[-1]))
+      } 
+    }
+    warning(paste0("getNodeChunks: path \"", paste0(path, collapse = "/"), "\" not found in node. Returning NULL"))
+    NULL
+  }
+}
+
+addRows_byfilter <- function(df, node, path_byfilter, fun, lastNode=NULL, topNamespace=NULL) {
+  if(length(path_byfilter) > 0) {
+    pathProp <- parsePath(path_byfilter)
+    path <- pathProp$path
+    pathHead <- pathProp$pathHead
+    byfilter <- pathProp$byfilter
+    node_idx <- which(names(node) == pathHead)
+    #print(paste0("pathHead: ", pathHead, ", byfilter: ", paste0(byfilter, collapse = ",")))
+    for(i in node_idx) {
+      if (length(byfilter) != 2 || grepl(byfilter[2], node[[i]][[byfilter[1]]]$text, ignore.case = T)) {
+        df <- addRows_byfilter(df, node[[i]], path[-1], fun,
+                             if(toupper(sub("\\(en-in\\)\\s*", "", node$name$text))=="COUNTERS") lastNode else node,
+                             if(is.null(topNamespace)) node[[i]]$name$text else topNamespace)
+      }
+    }
+    
     df
   } else {
     fun(df, node, lastNode, topNamespace)
   }
 }
+
 
 addRows <- function(df, node, path, fun, lastNode=NULL) {
   if(length(path) > 0) {
